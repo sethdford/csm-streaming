@@ -149,7 +149,11 @@ class Model(
         embeds = self._embed_tokens(tokens)
         masked_embeds = embeds * tokens_mask.unsqueeze(-1)
         h = masked_embeds.sum(dim=2)
-        h = self.backbone(h, input_pos=input_pos, mask=curr_backbone_mask).to(dtype=dtype)
+        # --- Cast input h to backbone dtype --- START
+        backbone_dtype = next(self.backbone.parameters()).dtype
+        h = h.to(backbone_dtype)
+        # --- Cast input h to backbone dtype --- END
+        h = self.backbone(h, input_pos=input_pos, mask=curr_backbone_mask)
 
         last_h = h[:, -1, :]
         c0_logits = self.codebook0_head(last_h)

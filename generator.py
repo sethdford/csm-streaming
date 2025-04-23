@@ -68,7 +68,17 @@ class Generator:
         self._cache = OrderedDict()
         self._text_token_cache = {}
         torch.set_num_threads(16)
-        torch.cuda.set_per_process_memory_fraction(0.95)
+        if self.device == "cuda":
+            self.device_properties = torch.cuda.get_device_properties(0)
+            if self.device_properties.total_memory < 8 * 1024**3:
+                print("Warning: Low GPU memory detected. May run slow or OOM.")
+            # Limit memory fraction to prevent OOMs in multi-process scenarios
+            # Wrap this in a check for CUDA availability
+            if torch.cuda.is_available():
+                torch.cuda.set_per_process_memory_fraction(0.95)
+        elif self.device == "mps":
+            if torch.backends.mps.is_available():
+                pass # No specific MPS properties to check easily
 
     def _tokenize_text_segment(self, text: str, speaker: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -237,7 +247,13 @@ class Generator:
                 batch_samples = []
 
                 for _ in range(batch_size_actual):
-                    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    # --- Modify Autocast --- START
+                    # Use bfloat16 only if on CUDA and supported, disable on CPU
+                    autocast_dtype = torch.bfloat16 if self.device == 'cuda' and torch.cuda.is_bf16_supported() else None
+                    autocast_enabled = self.device != 'cpu' # Disable autocast on CPU
+                    
+                    with torch.autocast(device_type=self.device.type, dtype=autocast_dtype, enabled=autocast_enabled):
+                    # --- Modify Autocast --- END
                         sample = self._model.generate_frame(curr_tokens, curr_tokens_mask, curr_pos, temperature, topk)
                         if torch.cuda.is_available() and hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available"):
                             try:
@@ -625,7 +641,16 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     
     model = Model.from_pretrained("sesame/csm-1b")
     
-    dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+    # --- Modify dtype handling --- START
+    # Only use bfloat16 on CUDA, otherwise keep default (float32)
+    if device == 'cuda' and torch.cuda.is_bf16_supported():
+        dtype = torch.bfloat16
+    elif device == 'cuda': # Fallback for CUDA without bf16 support
+        dtype = torch.float16 
+    else: # Keep default dtype (likely float32) for CPU/MPS
+        dtype = torch.float32 # Explicitly use float32 for non-CUDA
+    # --- Modify dtype handling --- END
+
     model.decoder = torch.compile(model.decoder, fullgraph=True, backend='cudagraphs')
     model.forward = torch.compile(model.forward, mode="max-autotune")
     model.to(device=device, dtype=dtype)
