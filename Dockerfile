@@ -4,6 +4,9 @@ FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
 # Set the working directory inside the container
 WORKDIR /app
 
+# Set DEBIAN_FRONTEND to noninteractive to avoid prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install essential system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
